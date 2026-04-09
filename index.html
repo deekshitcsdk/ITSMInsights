@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>ITSM Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+  margin:0;
+  font-family: "Segoe UI", Arial;
+  background:#f0f2f5;
+}
+
+/* Top Bar */
+.header {
+  height:50px;
+  background:#1f2a44;
+  color:white;
+  display:flex;
+  align-items:center;
+  padding:0 20px;
+  font-size:18px;
+}
+
+/* Layout */
+.container {
+  display:flex;
+}
+
+/* Sidebar */
+.sidebar {
+  width:220px;
+  background:#ffffff;
+  height:100vh;
+  border-right:1px solid #ddd;
+  padding:15px;
+}
+
+.sidebar h3 {
+  color:#4a6fa5;
+}
+
+.sidebar p {
+  padding:8px;
+  margin:5px 0;
+  border-radius:6px;
+  cursor:pointer;
+}
+
+.sidebar p:hover {
+  background:#eef3f8;
+}
+
+/* Main */
+.main {
+  flex:1;
+  padding:20px;
+}
+
+/* Filters */
+.filters {
+  background:#fff;
+  padding:15px;
+  border-radius:10px;
+  margin-bottom:20px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.08);
+}
+
+/* Cards */
+.cards {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:15px;
+}
+
+.card {
+  background:#fff;
+  padding:15px;
+  border-radius:10px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.08);
+}
+
+.card h2 {
+  margin:0;
+  color:#2c3e50;
+}
+
+.card p {
+  margin:5px 0 0;
+  color:#888;
+}
+
+/* Charts */
+.charts {
+  margin-top:20px;
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(350px,1fr));
+  gap:20px;
+}
+
+.chart-box {
+  background:#fff;
+  padding:15px;
+  border-radius:10px;
+  box-shadow:0 1px 4px rgba(0,0,0,0.08);
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">ITSM Dashboard</div>
+
+<div class="container">
+
+<div class="sidebar">
+  <h3>Navigation</h3>
+  <p>Dashboard</p>
+  <p>Incidents</p>
+  <p>Requests</p>
+  <p>Change</p>
+</div>
+
+<div class="main">
+
+<div class="filters">
+  <input type="file" id="upload">
+  From: <input type="date" id="fromDate">
+  To: <input type="date" id="toDate">
+  <button onclick="filterData()">Apply</button>
+</div>
+
+<div class="cards">
+<div class="card"><h2 id="open"></h2><p>Open</p></div>
+<div class="card"><h2 id="closed"></h2><p>Closed</p></div>
+<div class="card"><h2 id="progress"></h2><p>In Progress</p></div>
+<div class="card"><h2 id="sla"></h2><p>SLA Breach</p></div>
+<div class="card"><h2 id="mttr"></h2><p>MTTR (hrs)</p></div>
+<div class="card"><h2 id="slaPct"></h2><p>SLA %</p></div>
+</div>
+
+<div class="charts">
+<div class="chart-box"><canvas id="trend"></canvas></div>
+<div class="chart-box"><canvas id="priority"></canvas></div>
+<div class="chart-box"><canvas id="agingChart"></canvas></div>
+<div class="chart-box"><canvas id="slaChart"></canvas></div>
+</div>
+
+</div>
+</div>
+
+<script>
+let rawData=[], charts=[];
+
+document.getElementById('upload').addEventListener('change', e=>{
+  const reader=new FileReader();
+  reader.onload=evt=>{
+    const wb=XLSX.read(new Uint8Array(evt.target.result),{type:'array'});
+    rawData=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+    filterData();
+  };
+  reader.readAsArrayBuffer(e.target.files[0]);
+});
+
+function filterData(){
+  const f=document.getElementById('fromDate').value;
+  const t=document.getElementById('toDate').value;
+
+  let data=rawData;
+  if(f&&t){
+    data=data.filter(d=>{
+      let dt=new Date(d.Date);
+      return dt>=new Date(f)&&dt<=new Date(t);
+    });
+  }
+  update(data);
+}
+
+function update(data){
+
+let open=data.filter(d=>d.Status=="Open").length;
+let closed=data.filter(d=>d.Status=="Closed").length;
+let progress=data.filter(d=>d.Status=="In Progress").length;
+let sla=data.filter(d=>d.SLA_Breach=="Yes").length;
+
+document.getElementById('open').innerText=open;
+document.getElementById('closed').innerText=closed;
+document.getElementById('progress').innerText=progress;
+document.getElementById('sla').innerText=sla;
+
+let resTimes=[];
+data.forEach(d=>{
+ if(d.Created_Time && d.Resolved_Time){
+  let t=(new Date(d.Resolved_Time)-new Date(d.Created_Time))/3600000;
+  resTimes.push(t);
+ }
+});
+let mttr=resTimes.length?(resTimes.reduce((a,b)=>a+b,0)/resTimes.length).toFixed(1):0;
+document.getElementById('mttr').innerText=mttr;
+
+let slaPct=data.length?(((data.length-sla)/data.length)*100).toFixed(1):0;
+document.getElementById('slaPct').innerText=slaPct+"%";
+
+renderCharts(data);
+}
+
+function renderCharts(data){
+charts.forEach(c=>c.destroy());
+charts=[];
+
+let map={};
+data.forEach(d=>map[d.Date]=(map[d.Date]||0)+1);
+
+charts.push(new Chart(trend,{
+type:'line',
+data:{labels:Object.keys(map),
+datasets:[{data:Object.values(map),borderColor:'#4a6fa5',fill:false}]}
+}));
+
+let p={};
+data.forEach(d=>p[d.Priority]=(p[d.Priority]||0)+1);
+
+charts.push(new Chart(priority,{
+type:'bar',
+data:{labels:Object.keys(p),
+datasets:[{data:Object.values(p),backgroundColor:'#90caf9'}]}
+}));
+
+let aging={"0-2":0,"3-5":0,"6+":0};
+data.forEach(d=>{
+ let age=(new Date()-new Date(d.Date))/86400000;
+ if(age<=2) aging["0-2"]++;
+ else if(age<=5) aging["3-5"]++;
+ else aging["6+"]++;
+});
+
+charts.push(new Chart(agingChart,{
+type:'bar',
+data:{labels:Object.keys(aging),
+datasets:[{data:Object.values(aging),backgroundColor:'#ffcc80'}]}
+}));
+
+charts.push(new Chart(slaChart,{
+type:'doughnut',
+data:{
+labels:["Met","Breached"],
+datasets:[{
+data:[data.length-(data.filter(d=>d.SLA_Breach=="Yes").length),
+data.filter(d=>d.SLA_Breach=="Yes").length],
+backgroundColor:['#a5d6a7','#ef9a9a']
+}]
+}
+}));
+}
+</script>
+
+</body>
+</html>
