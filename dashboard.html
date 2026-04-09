@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ITSM Dashboard</title>
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f7fa;
+      color: #333;
+      margin: 0;
+      padding: 20px;
+    }
+
+    h1 {
+      text-align: center;
+      color: #4a6fa5;
+    }
+
+    .controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    input, button {
+      padding: 8px;
+      margin: 5px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+    }
+
+    .cards {
+      display: flex;
+      justify-content: space-around;
+      margin: 20px 0;
+      flex-wrap: wrap;
+    }
+
+    .card {
+      background: #ffffff;
+      padding: 15px;
+      border-radius: 10px;
+      width: 150px;
+      text-align: center;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+
+    .charts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+    }
+
+    canvas {
+      background: white;
+      border-radius: 10px;
+      padding: 10px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>ITSM Dashboard</h1>
+
+<div class="controls">
+  <input type="file" id="upload" accept=".xlsx" />
+  <br/>
+  From: <input type="date" id="fromDate">
+  To: <input type="date" id="toDate">
+  <button onclick="filterData()">Apply Filter</button>
+</div>
+
+<div class="cards">
+  <div class="card"><h3 id="openCount">0</h3><p>Open</p></div>
+  <div class="card"><h3 id="closedCount">0</h3><p>Closed</p></div>
+  <div class="card"><h3 id="slaCount">0</h3><p>SLA Breach</p></div>
+  <div class="card"><h3 id="totalCount">0</h3><p>Total</p></div>
+</div>
+
+<div class="charts">
+  <canvas id="trendChart"></canvas>
+  <canvas id="categoryChart"></canvas>
+  <canvas id="statusChart"></canvas>
+</div>
+
+<script>
+
+let rawData = [];
+let charts = [];
+
+document.getElementById('upload').addEventListener('change', handleFile);
+
+function handleFile(e) {
+  const reader = new FileReader();
+
+  reader.onload = function(event) {
+    const data = new Uint8Array(event.target.result);
+    const workbook = XLSX.read(data, {type: 'array'});
+
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    rawData = XLSX.utils.sheet_to_json(sheet);
+
+    filterData();
+  };
+
+  reader.readAsArrayBuffer(e.target.files[0]);
+}
+
+function filterData() {
+  const from = document.getElementById('fromDate').value;
+  const to = document.getElementById('toDate').value;
+
+  let filtered = rawData;
+
+  if (from && to) {
+    filtered = rawData.filter(row => {
+      const d = new Date(row.Date);
+      return d >= new Date(from) && d <= new Date(to);
+    });
+  }
+
+  updateDashboard(filtered);
+}
+
+function updateDashboard(data) {
+  // Counters
+  const open = data.filter(d => d.Status === 'Open').length;
+  const closed = data.filter(d => d.Status === 'Closed').length;
+  const sla = data.filter(d => d.SLA_Breach === 'Yes').length;
+
+  document.getElementById('openCount').innerText = open;
+  document.getElementById('closedCount').innerText = closed;
+  document.getElementById('slaCount').innerText = sla;
+  document.getElementById('totalCount').innerText = data.length;
+
+  renderCharts(data);
+}
+
+function renderCharts(data) {
+
+  charts.forEach(c => c.destroy());
+  charts = [];
+
+  // Trend Chart
+  const trendMap = {};
+  data.forEach(d => {
+    const date = d.Date;
+    trendMap[date] = (trendMap[date] || 0) + 1;
+  });
+
+  const trendChart = new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: Object.keys(trendMap),
+      datasets: [{
+        label: 'Tickets Trend',
+        data: Object.values(trendMap),
+        borderColor: '#7aa6c2',
+        backgroundColor: '#d6e6f2'
+      }]
+    }
+  });
+
+  // Category Chart
+  const catMap = {};
+  data.forEach(d => {
+    catMap[d.Category] = (catMap[d.Category] || 0) + 1;
+  });
+
+  const categoryChart = new Chart(document.getElementById('categoryChart'), {
+    type: 'bar',
+    data: {
+      labels: Object.keys(catMap),
+      datasets: [{
+        label: 'Categories',
+        data: Object.values(catMap),
+        backgroundColor: '#a8dadc'
+      }]
+    }
+  });
+
+  // Status Chart
+  const statusMap = {};
+  data.forEach(d => {
+    statusMap[d.Status] = (statusMap[d.Status] || 0) + 1;
+  });
+
+  const statusChart = new Chart(document.getElementById('statusChart'), {
+    type: 'pie',
+    data: {
+      labels: Object.keys(statusMap),
+      datasets: [{
+        data: Object.values(statusMap),
+        backgroundColor: ['#90dbf4', '#cdb4db', '#ffc8dd']
+      }]
+    }
+  });
+
+  charts.push(trendChart, categoryChart, statusChart);
+}
+
+</script>
+
+</body>
+</html>

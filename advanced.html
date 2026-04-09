@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Advanced ITSM Dashboard</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body { font-family: Arial; background:#f4f6f9; color:#333; }
+h1 { text-align:center; color:#5b7c99; }
+
+.controls { text-align:center; margin:20px; }
+
+.cards {
+  display:flex; flex-wrap:wrap; justify-content:center; gap:15px;
+}
+
+.card {
+  background:#fff;
+  padding:15px;
+  border-radius:10px;
+  width:160px;
+  text-align:center;
+  box-shadow:0 2px 5px rgba(0,0,0,0.1);
+}
+
+.charts {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+  gap:20px;
+  margin-top:20px;
+}
+
+canvas { background:#fff; padding:10px; border-radius:10px; }
+</style>
+</head>
+
+<body>
+
+<h1>Advanced ITSM Dashboard</h1>
+
+<div class="controls">
+<input type="file" id="upload" accept=".xlsx">
+<br>
+From: <input type="date" id="fromDate">
+To: <input type="date" id="toDate">
+<button onclick="filterData()">Apply</button>
+</div>
+
+<div class="cards">
+<div class="card"><h3 id="open"></h3><p>Open</p></div>
+<div class="card"><h3 id="closed"></h3><p>Closed</p></div>
+<div class="card"><h3 id="progress"></h3><p>In Progress</p></div>
+<div class="card"><h3 id="sla"></h3><p>SLA Breach</p></div>
+<div class="card"><h3 id="total"></h3><p>Total</p></div>
+
+<div class="card"><h3 id="mttr"></h3><p>MTTR (hrs)</p></div>
+<div class="card"><h3 id="mtta"></h3><p>MTTA (hrs)</p></div>
+<div class="card"><h3 id="slaPct"></h3><p>SLA %</p></div>
+</div>
+
+<div class="charts">
+<canvas id="trend"></canvas>
+<canvas id="priority"></canvas>
+<canvas id="aging"></canvas>
+<canvas id="slaChart"></canvas>
+</div>
+
+<script>
+let rawData=[], charts=[];
+
+document.getElementById('upload').addEventListener('change', e=>{
+  const reader=new FileReader();
+  reader.onload=evt=>{
+    const wb=XLSX.read(new Uint8Array(evt.target.result),{type:'array'});
+    rawData=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+    filterData();
+  };
+  reader.readAsArrayBuffer(e.target.files[0]);
+});
+
+function filterData(){
+  const f=document.getElementById('fromDate').value;
+  const t=document.getElementById('toDate').value;
+
+  let data=rawData;
+  if(f&&t){
+    data=data.filter(d=>{
+      let dt=new Date(d.Date);
+      return dt>=new Date(f)&&dt<=new Date(t);
+    });
+  }
+  update(data);
+}
+
+function update(data){
+
+// Counters
+let open=data.filter(d=>d.Status=="Open").length;
+let closed=data.filter(d=>d.Status=="Closed").length;
+let progress=data.filter(d=>d.Status=="In Progress").length;
+let sla=data.filter(d=>d.SLA_Breach=="Yes").length;
+
+document.getElementById('open').innerText=open;
+document.getElementById('closed').innerText=closed;
+document.getElementById('progress').innerText=progress;
+document.getElementById('sla').innerText=sla;
+document.getElementById('total').innerText=data.length;
+
+// MTTR / MTTA
+let resTimes=[], ackTimes=[];
+
+data.forEach(d=>{
+  if(d.Created_Time && d.Resolved_Time){
+    let t=(new Date(d.Resolved_Time)-new Date(d.Created_Time))/3600000;
+    resTimes.push(t);
+  }
+  if(d.Created_Time && d.Acknowledged_Time){
+    let t=(new Date(d.Acknowledged_Time)-new Date(d.Created_Time))/3600000;
+    ackTimes.push(t);
+  }
+});
+
+let mttr=resTimes.length?(resTimes.reduce((a,b)=>a+b,0)/resTimes.length).toFixed(2):0;
+let mtta=ackTimes.length?(ackTimes.reduce((a,b)=>a+b,0)/ackTimes.length).toFixed(2):0;
+
+document.getElementById('mttr').innerText=mttr;
+document.getElementById('mtta').innerText=mtta;
+
+// SLA %
+let slaPct=data.length?(((data.length-sla)/data.length)*100).toFixed(1):0;
+document.getElementById('slaPct').innerText=slaPct+"%";
+
+renderCharts(data);
+}
+
+function renderCharts(data){
+charts.forEach(c=>c.destroy());
+charts=[];
+
+// Trend
+let map={};
+data.forEach(d=>{
+  map[d.Date]=(map[d.Date]||0)+1;
+});
+charts.push(new Chart(trend,{type:'line',
+data:{labels:Object.keys(map),
+datasets:[{label:'Tickets',data:Object.values(map),borderColor:'#6c9bcf'}]}}));
+
+// Priority
+let p={};
+data.forEach(d=>p[d.Priority]=(p[d.Priority]||0)+1);
+charts.push(new Chart(priority,{type:'bar',
+data:{labels:Object.keys(p),
+datasets:[{data:Object.values(p),backgroundColor:'#a8dadc'}]}}));
+
+// Aging
+let aging={"0-2":0,"3-5":0,"6+":0};
+data.forEach(d=>{
+  let age=(new Date()-new Date(d.Date))/86400000;
+  if(age<=2) aging["0-2"]++;
+  else if(age<=5) aging["3-5"]++;
+  else aging["6+"]++;
+});
+charts.push(new Chart(agingChart,{type:'bar',
+data:{labels:Object.keys(aging),
+datasets:[{data:Object.values(aging),backgroundColor:'#ffd6a5'}]}}));
+
+// SLA donut
+charts.push(new Chart(slaChart,{type:'doughnut',
+data:{labels:["Met","Breached"],
+datasets:[{data:[data.length-(data.filter(d=>d.SLA_Breach=="Yes").length),
+data.filter(d=>d.SLA_Breach=="Yes").length],
+backgroundColor:['#bde0fe','#ffadad']}]}}));
+}
+</script>
+
+</body>
+</html>
